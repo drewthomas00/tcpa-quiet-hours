@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in engines; 24 is the current LTS.
+        node: ['18', '20', '22', '24']
+    name: node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # The jurisdiction tables are only as good as the runtime's tz database, and
+  # the whole library is timezone arithmetic. Prove the suite does not quietly
+  # depend on the runner's own clock.
+  test-non-utc:
+    runs-on: ubuntu-latest
+    name: node 22 (TZ=Pacific/Auckland)
+    env:
+      TZ: Pacific/Auckland
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test

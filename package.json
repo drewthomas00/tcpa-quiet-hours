@@ -1,0 +1,56 @@
+{
+  "name": "tcpa-quiet-hours",
+  "version": "1.0.0",
+  "description": "Is it legal to send this marketing message right now? TCPA quiet-hours evaluation in the recipient's local time — the federal 8am–9pm window plus seven state overrides and six Sunday blackouts, with ZIP and area-code jurisdiction resolution. Pure functions, zero dependencies.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./jurisdiction-data": {
+      "types": "./jurisdiction-data.d.ts",
+      "default": "./jurisdiction-data.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "jurisdiction-data.js",
+    "jurisdiction-data.d.ts",
+    "timezone.js",
+    "freeze.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "tcpa",
+    "quiet-hours",
+    "sms",
+    "telemarketing",
+    "compliance",
+    "47-cfr-64.1200",
+    "timezone",
+    "marketing"
+  ],
+  "author": "Drew Thomas <drew@drewthomasbuilds.com> (https://drewthomasbuilds.com)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewthomas00/tcpa-quiet-hours.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drewthomas00/tcpa-quiet-hours/issues"
+  },
+  "homepage": "https://github.com/drewthomas00/tcpa-quiet-hours#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
