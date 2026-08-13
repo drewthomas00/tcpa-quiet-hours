@@ -1,6 +1,10 @@
 # tcpa-quiet-hours
 
+[![npm](https://img.shields.io/npm/v/tcpa-quiet-hours)](https://www.npmjs.com/package/tcpa-quiet-hours)
 [![CI](https://github.com/drewthomas00/tcpa-quiet-hours/actions/workflows/ci.yml/badge.svg)](https://github.com/drewthomas00/tcpa-quiet-hours/actions/workflows/ci.yml)
+[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](https://www.npmjs.com/package/tcpa-quiet-hours?activeTab=dependencies)
+[![node](https://img.shields.io/node/v/tcpa-quiet-hours)](https://www.npmjs.com/package/tcpa-quiet-hours)
+[![license](https://img.shields.io/npm/l/tcpa-quiet-hours)](LICENSE)
 
 Is it legal to send this marketing message right now?
 
@@ -223,6 +227,14 @@ Node's built-in test runner, no framework. CI runs the suite on Node 18–24 and
 again under a non-UTC `TZ`, because a timezone library that only passes on a
 UTC machine has not been tested.
 
+## Related packages
+
+Small, dependency-light pieces pulled out of production systems I've built:
+
+- **[twilio-signature-verify](https://github.com/drewthomas00/twilio-signature-verify)** — verify `X-Twilio-Signature`, including behind a reverse proxy
+- **[pg-cron-lease](https://github.com/drewthomas00/pg-cron-lease)** — make an in-process cron job a singleton across replicas, using Postgres
+- **[us-zip-centroids](https://github.com/drewthomas00/us-zip-centroids)** — offline US ZIP → lat/lng, no geocoder
+
 ## License
 
-MIT
+MIT © [Drew Thomas](https://drewthomasbuilds.com)
