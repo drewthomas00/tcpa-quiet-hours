@@ -47,9 +47,10 @@ const { deepFreeze } = require('./freeze');
  *                 (Saturday → Friday) does
  *
  * Observation never REPLACES the date — both are blocked. Only fixed-date
- * rules are shifted; a weekday rule cannot land on a weekend by construction.
+ * rules are shifted; a weekday rule (Louisiana's third-Saturday Juneteenth,
+ * say) is blocked on its own day and never moved.
  *
- * @typedef {'none'|'sunday'|'weekend'} Observance
+ * @typedef {'none'|'sunday'|'weekend'|'any'} Observance
  */
 
 const OBSERVANCES = Object.freeze(['none', 'sunday', 'weekend', 'any']);
@@ -158,8 +159,9 @@ function normalizeCalendar(where, calendar) {
 /**
  * Every barred local date in `year`, with the holiday it belongs to.
  *
- * Includes the observed weekday of a weekend holiday from the NEXT year too —
- * a Saturday January 1 is observed on Friday December 31.
+ * Observation can cross a year boundary in both directions, so the years
+ * either side are computed too: a Saturday January 1 is observed on Friday
+ * December 31, and a Sunday December 31 on Monday January 1.
  *
  * @param {{observe: Observance, holidays: ReadonlyArray<HolidayRule>}} calendar
  * @param {number} year
@@ -167,7 +169,7 @@ function normalizeCalendar(where, calendar) {
  */
 function datesIn(calendar, year) {
   const out = new Map();
-  for (const y of [year, year + 1]) {
+  for (const y of [year - 1, year, year + 1]) {
     for (const rule of calendar.holidays) {
       if (rule.years && (y % 2 === 0) !== (rule.years === 'even')) continue;
       let ts;

@@ -47,7 +47,7 @@ export interface Verdict {
    * primary one.
    */
   ruleApplied: string | null;
-  /** Every jurisdiction checked, primary first. Empty when nothing resolved. */
+  /** Every jurisdiction checked, primary first. Empty when nothing resolved, or `now` was invalid. */
   jurisdictions: CheckedJurisdiction[];
 }
 
@@ -196,8 +196,9 @@ export declare class QuietHoursEngine {
   evaluate(args?: EvaluateArgs): Verdict;
 
   /**
-   * The next instant at which this recipient becomes contactable, or `null`
-   * when nothing resolves or nothing inside the horizon qualifies. Treat
+   * The next instant at which this recipient becomes contactable — `now`
+   * itself when already eligible — or `null` when nothing resolves, nothing
+   * inside the horizon qualifies, or `now` is not a valid instant. Treat
    * `null` as unsendable, not as "defer indefinitely".
    *
    * @throws {TypeError} if `maxDays` is not a positive finite number.

@@ -64,14 +64,16 @@ const HOLIDAY_CALENDARS = {
   // § 45:811 bars "days declared to be a state holiday". This is the broader
   // reading: every legal holiday in R.S. 1:55(A)(1) and 1:55.1, plus the
   // even-year election day that state employees also have off. Saturday
-  // half-holidays are NOT blocked — § 45:811(2) permits Saturday calls.
+  // half-holidays are NOT blocked — § 45:811(2) permits Saturday calls — but
+  // a full legal holiday that falls on a Saturday is: § 1:55.1 makes
+  // Juneteenth the third Saturday in June.
   LA: {
     citation: 'La. Rev. Stat. § 1:55(A)(1), (B)(1)(a); § 1:55.1',
     sourceUrl: 'https://legis.la.gov/Legis/LawPrint.aspx?d=74097',
     // 1:55(A)(4) moves only Jan 1, Jul 4 and Dec 25 (Sunday → Monday; Saturday
     // → Friday by local ordinance). Applied to every fixed date: blocks more.
     observe: 'weekend',
-    note: 'Not encoded: holidays proclaimed by the governor (e.g. "Acadian Day"), and Inauguration Day, a holiday only in Baton Rouge.',
+    note: 'Juneteenth is § 1:55.1 (https://legis.la.gov/legis/Law.aspx?d=1238710). Not encoded: holidays proclaimed by the governor (e.g. "Acadian Day"), and Inauguration Day — a holiday only in Baton Rouge, which would be blocked statewide like other local holidays, but falls once every four years, which a calendar rule cannot yet express.',
     holidays: [
       { name: "New Year's Day", month: 1, day: 1 },
       { name: 'Battle of New Orleans', month: 1, day: 8 },
@@ -247,8 +249,9 @@ const STATE_RULES = {
   NM: {
     windows: { default: ['09:00', '21:00'] },
     citation: 'N.M. Stat. Ann. § 57-12-22(B)(5)',
-    sourceUrl: null,
+    sourceUrl: 'https://www.nmlegis.gov/Sessions/20%20Regular/bills/house/HB0078.HTML',
     lastVerified: null,
+    note: 'Read in the existing-law text that 2020 HB 78 quotes while proposing to amend it, not the current code.',
   },
   NV: {
     windows: { default: ['09:00', '20:00'] },

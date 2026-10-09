@@ -1,6 +1,6 @@
 {
   "name": "tcpa-quiet-hours",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Is it legal to send this marketing message right now? TCPA quiet-hours evaluation in the recipient's local time — the federal 8am–9pm window plus 21 stricter state rules (per-weekday windows, Sunday and holiday blackouts, dated amendments, area-code residency presumptions), with ZIP and area-code jurisdiction resolution. Pure functions, zero dependencies.",
   "main": "index.js",
   "types": "index.d.ts",

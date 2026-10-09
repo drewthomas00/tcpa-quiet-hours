@@ -411,6 +411,14 @@ describe('unknown option keys are rejected, not ignored', () => {
     );
   });
 
+  it('mentions the fallback timezone only for a key that looks like one', () => {
+    assert.throws(() => quietHours.evaluate({ fallback_tz: 'America/Denver' }), /meant as fallbackTimezone/);
+    assert.throws(
+      () => quietHours.evaluate({ maxDays: 3 }),
+      (err) => /unknown option 'maxDays'/.test(err.message) && !/meant as fallbackTimezone/.test(err.message),
+    );
+  });
+
   it('guards all three entry points', () => {
     assert.throws(() => quietHours.evaluate({ nope: 1 }), /unknown option 'nope'/);
     assert.throws(() => quietHours.nextEligibleAt({ nope: 1 }), /unknown option 'nope'/);
@@ -487,6 +495,29 @@ describe('territories and military ZIP prefixes', () => {
     assert.equal(quietHours.evaluate({ zipCode: '00901', now: NOON_ET }).timezone, 'America/Puerto_Rico');
     assert.equal(quietHours.evaluate({ zipCode: '00802', now: NOON_ET }).state, 'VI');
     assert.equal(quietHours.evaluate({ zipCode: '96910', now: NOON_ET }).timezone, 'Pacific/Guam');
+  });
+
+  it('resolves the Pacific ZIPs whose prefix belongs to somewhere else', () => {
+    // American Samoa's 96799 sits in Hawaii's 967 (an hour ahead of it), and
+    // the Marianas and the Freely Associated States share Guam's 969.
+    const cases = {
+      96799: ['AS', 'Pacific/Pago_Pago'],
+      96950: ['MP', 'Pacific/Saipan'],
+      96940: ['PW', 'Pacific/Palau'],
+      96942: ['FM', 'Pacific/Chuuk'],
+      96960: ['MH', 'Pacific/Majuro'],
+      96813: ['HI', 'Pacific/Honolulu'],
+      96910: ['GU', 'Pacific/Guam'],
+    };
+    for (const [zip, [state, timezone]] of Object.entries(cases)) {
+      assert.deepEqual(quietHours.resolveJurisdiction({ zipCode: zip }), { state, timezone, source: SOURCES.ZIP }, zip);
+    }
+    // 07:30 in Pago Pago is 08:30 in Honolulu: read on Hawaii's clock, it passed.
+    const out = quietHours.evaluate({ zipCode: '96799', now: new Date('2026-10-08T18:30:00Z') });
+    assert.equal(out.eligible, false);
+    assert.equal(out.reason, REASONS.OUTSIDE_WINDOW);
+    // 21:30 in Majuro is 19:30 in Guam: read on Guam's clock, it passed.
+    assert.equal(quietHours.evaluate({ zipCode: '96960', now: new Date('2026-10-08T09:30:00Z') }).eligible, false);
   });
 
   it('falls through to the phone for a military ZIP, which has no usable zone', () => {
@@ -782,6 +813,17 @@ describe('QuietHoursEngine — custom resolver', () => {
     const engine = new QuietHoursEngine({ resolver: () => undefined });
     assert.throws(() => engine.evaluate({ now: NOON_ET }), /resolver must return/);
   });
+
+  it('fails loud when a resolver omits source, so every verdict field is present', () => {
+    const engine = new QuietHoursEngine({ resolver: () => ({ state: 'MD', timezone: 'America/New_York' }) });
+    assert.throws(() => engine.evaluate({ now: NOON_ET }), /resolver must return/);
+  });
+
+  it('reads ruleFor\'s state case-insensitively, as the resolver does', () => {
+    const engine = new QuietHoursEngine();
+    assert.equal(engine.ruleFor('md', '2026-10-08'), engine.ruleFor('MD', '2026-10-08'));
+    assert.equal(engine.ruleFor('md', '2026-10-08').label, 'MD');
+  });
 });
 
 
@@ -881,6 +923,13 @@ describe('holidays', () => {
     assert.equal(holidays.holidayOn(cal, 2028, '2028-01-01'), 'NY');
     const sundayOnly = holidays.normalizeCalendar('t', { observe: 'sunday', holidays: [{ name: 'NY', month: 1, day: 1 }] });
     assert.equal(holidays.holidayOn(sundayOnly, 2027, '2027-12-31'), null);
+  });
+
+  it('carries a December holiday observed in January into the new year', () => {
+    // 2028-12-31 is a Sunday, observed Monday 2029-01-01.
+    const cal = holidays.normalizeCalendar('t', { observe: 'sunday', holidays: [{ name: 'NYE', month: 12, day: 31 }] });
+    assert.equal(holidays.holidayOn(cal, 2028, '2028-12-31'), 'NYE');
+    assert.equal(holidays.holidayOn(cal, 2029, '2029-01-01'), 'NYE');
   });
 
   it('AL: no contact on Christmas Day', () => {

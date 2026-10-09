@@ -300,8 +300,8 @@ const ZIP3_RANGES = deepFreeze([
   [889, 898, 'NV'],
   [900, 961, 'CA'],
   [962, 966, 'AP'],                   // APO/FPO Pacific
-  [967, 968, 'HI'],
-  [969, 969, 'GU'],                   // Guam, CNMI, and the Freely Associated States
+  [967, 968, 'HI'],                   // but 96799 is American Samoa: see ZIP5_JURISDICTIONS
+  [969, 969, 'GU'],                   // Guam; the CNMI and Freely Associated States ZIPs are in ZIP5_JURISDICTIONS
   [970, 979, 'OR'],
   [980, 994, 'WA'],
   [995, 999, 'AK'],
@@ -378,6 +378,29 @@ const AREA_CODE_TIMEZONE_OVERRIDES = deepFreeze({
 });
 
 /**
+ * Whole ZIPs whose prefix belongs to somewhere else, checked before the ZIP3
+ * table. American Samoa (UTC-11) shares 967 with Hawaii (UTC-10); the
+ * Northern Mariana Islands share 969 with Guam; and the Freely Associated
+ * States — Palau, Micronesia, the Marshall Islands, sovereign nations served
+ * by US mail — share 969 too while keeping their own clocks, up to two hours
+ * from Guam's. They carry their ISO codes and no state rule applies.
+ */
+const ZIP5_JURISDICTIONS = Object.freeze(Object.assign(Object.create(null), {
+  96799: Object.freeze({ state: 'AS', timezone: 'Pacific/Pago_Pago' }),
+  96950: Object.freeze({ state: 'MP', timezone: 'Pacific/Saipan' }),   // Saipan
+  96951: Object.freeze({ state: 'MP', timezone: 'Pacific/Saipan' }),   // Rota
+  96952: Object.freeze({ state: 'MP', timezone: 'Pacific/Saipan' }),   // Tinian
+  96939: Object.freeze({ state: 'PW', timezone: 'Pacific/Palau' }),
+  96940: Object.freeze({ state: 'PW', timezone: 'Pacific/Palau' }),
+  96941: Object.freeze({ state: 'FM', timezone: 'Pacific/Pohnpei' }),  // Pohnpei
+  96942: Object.freeze({ state: 'FM', timezone: 'Pacific/Chuuk' }),    // Chuuk
+  96943: Object.freeze({ state: 'FM', timezone: 'Pacific/Chuuk' }),    // Yap
+  96944: Object.freeze({ state: 'FM', timezone: 'Pacific/Kosrae' }),   // Kosrae
+  96960: Object.freeze({ state: 'MH', timezone: 'Pacific/Majuro' }),   // Majuro
+  96970: Object.freeze({ state: 'MH', timezone: 'Pacific/Majuro' }),   // Ebeye
+}));
+
+/**
  * Expand a range table into a flat prefix → value map.
  *
  * Built eagerly. The whole expansion is under a thousand iterations, which is
@@ -417,6 +440,17 @@ const ZIP3_TIMEZONE = expandRanges(
 function getZipState(zip3) {
   if (!Number.isInteger(zip3) || zip3 < 0 || zip3 > 999) return null;
   return ZIP3_STATE[zip3] || null;
+}
+
+/**
+ * The `{state, timezone}` of a whole ZIP whose prefix belongs to somewhere
+ * else, or null for every other ZIP.
+ *
+ * @param {string} zip5 - five digits
+ * @returns {?Readonly<{state: string, timezone: string}>}
+ */
+function getZip5Jurisdiction(zip5) {
+  return (typeof zip5 === 'string' && ZIP5_JURISDICTIONS[zip5]) || null;
 }
 
 /**
@@ -478,6 +512,8 @@ module.exports = {
   AREA_CODE_TIMEZONE_OVERRIDES,
   ZIP3_RANGES,
   ZIP3_TIMEZONE_OVERRIDES,
+  ZIP5_JURISDICTIONS,
+  getZip5Jurisdiction,
   getZipState,
   getAreaCodeState,
   getStateTimezone,

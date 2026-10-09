@@ -18,6 +18,15 @@ export declare const ZIP3_RANGES: ReadonlyArray<readonly [number, number, string
 /** `[zip3Start, zip3End, state, ianaZone]` for prefixes in a minority zone. */
 export declare const ZIP3_TIMEZONE_OVERRIDES: ReadonlyArray<readonly [number, number, string, string]>;
 
+/**
+ * Whole ZIPs whose prefix belongs to somewhere else (American Samoa's 96799
+ * in Hawaii's 967; the CNMI and Freely Associated States in Guam's 969).
+ */
+export declare const ZIP5_JURISDICTIONS: Readonly<Record<string, Readonly<{ state: string; timezone: string }>>>;
+
+/** `{state, timezone}` for a whole ZIP in ZIP5_JURISDICTIONS, else null. */
+export declare function getZip5Jurisdiction(zip5: string): Readonly<{ state: string; timezone: string }> | null;
+
 /** Resolve a state or territory from a 3-digit ZIP prefix. */
 export declare function getZipState(zip3: number): string | null;
 

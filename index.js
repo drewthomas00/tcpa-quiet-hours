@@ -385,8 +385,9 @@ function assertKnownOptions(args, allowed, where) {
       throw new TypeError(
         `QuietHoursEngine.${where}: unknown option '${key}' `
         + `(expected one of: ${allowed.join(', ')}).`
-        + (allowed.includes('fallbackTimezone')
-          ? ' Silently ignoring it would hide a missing fallback timezone until it blocked live sends.'
+        + (allowed.includes('fallbackTimezone') && /zone|tz/i.test(key)
+          ? ' If this was meant as fallbackTimezone, ignoring it would leave recipients'
+            + ' whose ZIP and area code do not resolve unsendable, without a word.'
           : ''),
       );
     }
@@ -453,7 +454,7 @@ class QuietHoursEngine {
    * Decide whether contacting this recipient is permitted at `now`.
    *
    * The verdict names the jurisdiction *and* how it was resolved, so an audit
-   * six months later can answer "why was 8:30 PM eligible for this recipient?"
+   * six months later can answer "why was 8:30 PM blocked for this recipient?"
    * from the log line alone: `{state: 'MD', source: 'zip', ruleApplied: 'MD'}`.
    *
    * When a second jurisdiction applies — a ZIP in one state and a phone
@@ -518,8 +519,9 @@ class QuietHoursEngine {
    * @param {object} args - same jurisdiction inputs as evaluate()
    * @param {Date|number} [args.now]
    * @param {number} [args.maxDays=8] - search horizon; never loops forever
-   * @returns {Date|null} null when nothing resolves or nothing inside the
-   *   horizon qualifies. Treat null as unsendable, not as "defer indefinitely".
+   * @returns {Date|null} null when nothing resolves, nothing inside the
+   *   horizon qualifies, or `now` is not a valid instant. Treat null as
+   *   unsendable, not as "defer indefinitely".
    * @throws {TypeError} if maxDays is not a positive finite number, or on an
    *   unrecognised option key
    */
@@ -534,6 +536,9 @@ class QuietHoursEngine {
     }
 
     const start = toInstant(now);
+    // Unlike maxDays this answers null rather than throwing, matching
+    // evaluate(), which reports an unusable clock as 'invalid_now' instead of
+    // throwing. Call evaluate() to tell the two nulls apart.
     if (!start) return null;
 
     // Resolve once. `evaluate` would re-resolve on every probe.
@@ -591,7 +596,8 @@ class QuietHoursEngine {
       const resolved = this._resolver({ phone, zipCode, fallbackTimezone });
       // Fail loud, not with a destructuring error three frames away: a
       // resolver that returns nothing is a wiring bug, not a jurisdiction.
-      if (!resolved || typeof resolved !== 'object') {
+      if (!resolved || typeof resolved !== 'object' || typeof resolved.source !== 'string'
+        || (resolved.timezone != null && typeof resolved.timezone !== 'string')) {
         throw new TypeError('QuietHoursEngine: resolver must return {state, timezone, source}');
       }
       // Rule keys are upper-case. A resolver that answers 'md' from a billing
@@ -604,6 +610,12 @@ class QuietHoursEngine {
     }
 
     // 1. ZIP — geographic, and the only signal that cannot follow a person.
+    //    A few Pacific ZIPs share a prefix with somewhere else entirely —
+    //    American Samoa's 96799 sits in Hawaii's 967 — so those match whole.
+    const zip5 = parseZip5(zipCode);
+    const exact = zip5 === null ? null : jurisdiction.getZip5Jurisdiction(zip5);
+    if (exact) return { state: exact.state, timezone: exact.timezone, source: SOURCES.ZIP };
+
     const zip3 = parseZip3(zipCode);
     if (zip3 !== null) {
       const state = jurisdiction.getZipState(zip3);
@@ -682,8 +694,10 @@ class QuietHoursEngine {
    * @returns {Readonly<object>}
    */
   ruleFor(state, isoDate) {
-    const versions = state && Object.prototype.hasOwnProperty.call(this.rules, state)
-      ? this.rules[state]
+    // Rule keys are upper-case, as everywhere else: 'md' is Maryland, not federal.
+    const code = typeof state === 'string' ? state.trim().toUpperCase() : null;
+    const versions = code && Object.prototype.hasOwnProperty.call(this.rules, code)
+      ? this.rules[code]
       : null;
     if (!versions) return FEDERAL_RULE;
     let current = null;
@@ -780,14 +794,25 @@ class QuietHoursEngine {
  * @returns {number|null}
  */
 function parseZip3(zipCode) {
+  const zip5 = parseZip5(zipCode);
+  return zip5 === null ? null : Number.parseInt(zip5.slice(0, 3), 10);
+}
+
+/**
+ * The 5-digit ZIP, by the same rules as {@link parseZip3}, or null.
+ *
+ * @param {string|number} zipCode
+ * @returns {string|null}
+ */
+function parseZip5(zipCode) {
   if (typeof zipCode === 'number') {
     if (!Number.isInteger(zipCode) || zipCode < 0 || zipCode > 99999) return null;
-    return Number.parseInt(String(zipCode).padStart(5, '0').slice(0, 3), 10);
+    return String(zipCode).padStart(5, '0');
   }
   if (typeof zipCode !== 'string') return null;
   const digits = zipCode.replace(/[^0-9]/g, '');
   if (digits.length !== 5 && digits.length !== 9) return null;
-  return Number.parseInt(digits.slice(0, 3), 10);
+  return digits.slice(0, 5);
 }
 
 /**

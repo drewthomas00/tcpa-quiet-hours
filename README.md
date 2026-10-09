@@ -71,7 +71,7 @@ const verdict = quietHours.evaluate({
 
 Every verdict names the jurisdiction **and how it was resolved**, and every field
 is always present, so you can log the whole object structurally. When an audit
-six months from now asks "why was 8:30 PM eligible for this recipient?",
+six months from now asks "why was 8:30 PM blocked for this recipient?",
 `{state: 'MD', source: 'zip', ruleApplied: 'MD'}` answers it without anyone
 reconstructing the logic.
 
@@ -88,7 +88,8 @@ to:
 
 ```js
 const when = quietHours.nextEligibleAt({ zipCode: '21201' });
-// → Date, the next 8:00 AM on the recipient's clock
+// → `now` itself if the recipient is already contactable
+// → otherwise a Date: the next opening on the recipient's clock (9:00 AM in Maryland)
 // → null if nothing qualifies within maxDays (default 8). Treat null as
 //   unsendable, NOT as "retry forever".
 ```
@@ -101,6 +102,8 @@ spring-forward fires an hour late.
 A `maxDays` that is zero, negative or non-finite **throws**. Returning `null`
 there would be indistinguishable from "this recipient is never contactable",
 which is an expensive thing to debug from a queue that quietly stopped draining.
+(An unusable `now` returns `null`, as `evaluate()` reports it as `invalid_now`
+rather than throwing; call `evaluate()` to tell the two apart.)
 
 ### Correcting the rules yourself
 
@@ -209,15 +212,18 @@ federal rule applies — a state override cannot be assumed from a guess.
 
 **US territories are covered.** Puerto Rico, the Virgin Islands, Guam, the
 Northern Marianas and American Samoa are fully subject to the TCPA and resolve
-to real zones.
+to real zones — by ZIP as well as by area code, although American Samoa's
+96799 shares a prefix with Hawaii and the Marianas' with Guam. ZIPs in Palau,
+Micronesia and the Marshall Islands, which US mail serves but which keep their
+own clocks, resolve to those clocks under the federal rule.
 
 **Multi-timezone states are handled by ZIP3 and area-code override.** A
 prefix or area code is overridden only when its *majority* population sits in
-the non-default zone — so the Florida Panhandle, El Paso, western Kentucky, the
-Idaho panhandle and Chattanooga resolve correctly whether the signal is a ZIP or
-a phone number (915 is read on Mountain time, 865 on Eastern), while those that
-merely straddle a line keep the state default rather than being flipped
-wholesale.
+the non-default zone — so the Florida Panhandle, El Paso, western Kentucky and
+Chattanooga resolve correctly whether the signal is a ZIP or a phone number (915
+is read on Mountain time, 423 on Eastern), and the Idaho panhandle does by ZIP —
+while those that merely straddle a line keep the state default rather than being
+flipped wholesale.
 
 **Midnight is normalised.** Some ICU builds report hour `24`; unhandled, a
 message at 00:15 evaluates as 24:15 and every window comparison inverts.
@@ -252,8 +258,9 @@ rather say so than pretend:
   the rest of the state.
 
 - **Area codes that straddle a line** — 812/930 in southern Indiana, 906 in the
-  Upper Peninsula, 308 in Nebraska — keep the state default, which is wrong for
-  their minority. Supply a ZIP where you have one.
+  Upper Peninsula, 308 in Nebraska, 208/986 in Idaho (whose panhandle is on
+  Pacific time) — keep the state default, which is wrong for their minority.
+  Supply a ZIP where you have one.
 
 Where a prefix genuinely splits with no majority, the state default is used: no
 worse than a coin flip, and at least predictable.
@@ -304,7 +311,13 @@ make a send lawful. It is one gate of several.
 - **`STATE_RULES[state]` is now an array of versions**, and a rule has
   `windows` (seven days, Sunday first) instead of `startMinutes` /
   `endMinutes` / `excludesSundays`. Rules you *supply* may still use the 1.x
-  shape.
+  shape, but field names are now checked: a 1.x bundled rule copied verbatim
+  carries a `state` field, which 2.0 rejects — drop it, since the key already
+  says which state. The constructor likewise rejects option keys it does not
+  read.
+- **Mississippi is read on Central Standard Time all year**, as its statute
+  says, as well as on the recipient's clock. In summer that blocks 8–9 AM
+  Central Daylight Time sends that 1.x allowed.
 - **Verdicts carry `jurisdictions`**, and `ruleApplied` names the deciding rule,
   which may be a presumed jurisdiction's rather than the primary one's.
 - New reasons: `state_day_blackout`, `state_holiday_blackout`. New source:
