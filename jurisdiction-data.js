@@ -352,6 +352,32 @@ const ZIP3_TIMEZONE_OVERRIDES = deepFreeze([
 ]);
 
 /**
+ * Area codes whose majority population sits in a DIFFERENT timezone than
+ * their state's `STATE_TIMEZONE` default. `{areaCode: zone}`.
+ *
+ * Same inclusion rule as the ZIP3 overrides, and needed for the same reason:
+ * without it every El Paso number (915) resolves to Central time, so a 7:30 AM
+ * Mountain send reads as 8:30 and passes, and every Knoxville number (865)
+ * resolves to Central, so a 9:30 PM Eastern send reads as 8:30 and passes.
+ * An area code is already the weaker signal; it should not also be read on the
+ * wrong clock.
+ *
+ * Codes that straddle a line keep the state default when the default zone
+ * holds the majority — 812/930 (Evansville is Central, the rest of southern
+ * Indiana Eastern), 906 (the UP), 208/986, 308, 541/458, 605, 701.
+ */
+const AREA_CODE_TIMEZONE_OVERRIDES = deepFreeze({
+  850: 'America/Chicago',  // FL Panhandle — Pensacola, Fort Walton, Panama City outnumber Tallahassee
+  448: 'America/Chicago',  //   850's overlay
+  219: 'America/Chicago',  // NW Indiana (Gary, Hammond, Valparaiso)
+  270: 'America/Chicago',  // Western KY (Bowling Green, Owensboro, Paducah)
+  364: 'America/Chicago',  //   270's overlay
+  423: 'America/New_York', // East TN (Chattanooga, Tri-Cities)
+  865: 'America/New_York', // Knoxville
+  915: 'America/Denver',   // El Paso
+});
+
+/**
  * Expand a range table into a flat prefix → value map.
  *
  * Built eagerly. The whole expansion is under a thousand iterations, which is
@@ -431,12 +457,29 @@ function getStateTimezone(state, zip3 = null) {
     : null;
 }
 
+/**
+ * Resolve the IANA timezone for a NANP area code: its override when the code
+ * sits in its state's minority zone, otherwise the state default.
+ *
+ * @param {number} areaCode
+ * @returns {string|null} null when the code maps to no state
+ */
+function getAreaCodeTimezone(areaCode) {
+  const state = getAreaCodeState(areaCode);
+  if (!state) return null;
+  return Object.prototype.hasOwnProperty.call(AREA_CODE_TIMEZONE_OVERRIDES, areaCode)
+    ? AREA_CODE_TIMEZONE_OVERRIDES[areaCode]
+    : getStateTimezone(state);
+}
+
 module.exports = {
   STATE_TIMEZONE,
   AREA_CODE_STATE,
+  AREA_CODE_TIMEZONE_OVERRIDES,
   ZIP3_RANGES,
   ZIP3_TIMEZONE_OVERRIDES,
   getZipState,
   getAreaCodeState,
   getStateTimezone,
+  getAreaCodeTimezone,
 };

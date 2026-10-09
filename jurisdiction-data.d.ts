@@ -9,6 +9,9 @@ export declare const STATE_TIMEZONE: Readonly<Record<string, string>>;
 /** NANP area code → state/territory code. */
 export declare const AREA_CODE_STATE: Readonly<Record<number, string>>;
 
+/** Area code → IANA zone, for codes in their state's minority zone. */
+export declare const AREA_CODE_TIMEZONE_OVERRIDES: Readonly<Record<number, string>>;
+
 /** `[zip3Start, zip3End, state]`, inclusive. */
 export declare const ZIP3_RANGES: ReadonlyArray<readonly [number, number, string]>;
 
@@ -26,3 +29,9 @@ export declare function getAreaCodeState(areaCode: number): string | null;
  * prefix actually belongs to `state`.
  */
 export declare function getStateTimezone(state: string, zip3?: number | null): string | null;
+
+/**
+ * Resolve an area code's IANA timezone: its override when the code sits in
+ * its state's minority zone (915 → `America/Denver`), else the state default.
+ */
+export declare function getAreaCodeTimezone(areaCode: number): string | null;

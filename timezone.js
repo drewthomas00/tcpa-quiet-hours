@@ -21,28 +21,48 @@ const WEEKDAY_INDEX = Object.freeze({
 const UNKNOWN_DAY = -1;
 
 /**
+ * One formatter per zone. Building an Intl.DateTimeFormat costs far more than
+ * using one, and a deferral search reads the clock many times per call. Only
+ * zones Intl accepted are kept, so the cache is bounded by the zones in use.
+ */
+const formatters = new Map();
+
+function formatterFor(timeZone) {
+  let dtf = formatters.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'long',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    formatters.set(timeZone, dtf);
+  }
+  return dtf;
+}
+
+/**
  * Read `date` on the `timeZone` wall clock, in a single Intl pass.
  *
  * Returns only what the engine consumes. Callers MUST treat
  * `dayOfWeek === UNKNOWN_DAY` as a failure rather than as "not Sunday" — the
- * Sunday blackout is a hard legal gate in six jurisdictions, and a silent -1
- * would turn that gate into a no-op.
+ * Sunday blackouts are hard legal gates, and a silent -1 would turn them into
+ * a no-op.
  *
  * @param {Date} date
  * @param {string|null} timeZone - IANA zone (e.g. 'America/New_York')
- * @returns {{dayOfWeek: number, hour: number, minute: number, minutesOfDay: number}}
- *   `dayOfWeek` is 0=Sunday … 6=Saturday, or `UNKNOWN_DAY`.
+ * @returns {{dayOfWeek: number, hour: number, minute: number, minutesOfDay: number,
+ *   year: number, month: number, day: number, isoDate: string}}
+ *   `dayOfWeek` is 0=Sunday … 6=Saturday, or `UNKNOWN_DAY`. `month` is 1-12,
+ *   and `isoDate` is the local calendar date as 'YYYY-MM-DD'.
  * @throws {RangeError} if `timeZone` is not a recognised IANA identifier.
  */
 function wallClockPartsInZone(date, timeZone) {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: timeZone || 'UTC',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    weekday: 'long',
-  });
-
+  const dtf = formatterFor(timeZone || 'UTC');
   const map = Object.create(null);
   for (const part of dtf.formatToParts(date)) map[part.type] = part.value;
 
@@ -56,7 +76,12 @@ function wallClockPartsInZone(date, timeZone) {
     ? WEEKDAY_INDEX[weekday]
     : UNKNOWN_DAY;
 
-  return { dayOfWeek, hour, minute, minutesOfDay: hour * 60 + minute };
+  const year = Number(map.year);
+  const month = Number(map.month);
+  const day = Number(map.day);
+  const isoDate = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  return { dayOfWeek, hour, minute, minutesOfDay: hour * 60 + minute, year, month, day, isoDate };
 }
 
 module.exports = { wallClockPartsInZone, WEEKDAY_INDEX, UNKNOWN_DAY };

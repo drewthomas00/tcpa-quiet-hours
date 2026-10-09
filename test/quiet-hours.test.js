@@ -147,7 +147,7 @@ describe('evaluate — jurisdiction resolution priority', () => {
 
   it('emits the same key set on every path, so verdicts log structurally', () => {
     const keys = (v) => Object.keys(v).sort().join(',');
-    const expected = 'eligible,reason,ruleApplied,source,state,timezone';
+    const expected = 'eligible,jurisdictions,reason,ruleApplied,source,state,timezone';
     assert.equal(keys(quietHours.evaluate({ zipCode: '33101', now: NOON_ET })), expected);
     assert.equal(keys(quietHours.evaluate({ now: NOON_ET })), expected);
     assert.equal(keys(quietHours.evaluate({ fallbackTimezone: 'Not/Real', now: NOON_ET })), expected);
@@ -195,11 +195,16 @@ describe('evaluate — state overrides', () => {
     assert.equal(after.ruleApplied, 'MD');
   });
 
-  it('FL: blocks Sundays entirely', () => {
-    const out = quietHours.evaluate({ zipCode: '33101', now: SUN_10AM_ET });
-    assert.equal(out.eligible, false);
-    assert.equal(out.reason, REASONS.SUNDAY_BLACKOUT);
-    assert.equal(out.ruleApplied, 'FL');
+  it('FL: closes at 8 PM, and Sundays are permitted', () => {
+    // Fla. Stat. § 501.616(6)(a) says nothing about Sundays; 1.x wrongly
+    // blocked them.
+    const sunday = quietHours.evaluate({ zipCode: '33101', now: SUN_10AM_ET });
+    assert.equal(sunday.eligible, true);
+    assert.equal(sunday.ruleApplied, 'FL');
+
+    const evening = quietHours.evaluate({ zipCode: '33101', now: utcDate(2026, 6, 25, 0, 30) }); // 20:30 EDT
+    assert.equal(evening.eligible, false);
+    assert.equal(evening.reason, REASONS.OUTSIDE_WINDOW);
   });
 
   it('AL: blocks Sundays and closes at 8 PM', () => {
@@ -237,9 +242,9 @@ describe('evaluate — state overrides', () => {
     const instant = utcDate(2026, 6, 21, 6, 30);
     assert.equal(localTime(instant, 'America/Los_Angeles').startsWith('Sat'), true);
 
-    const florida = quietHours.evaluate({ zipCode: '33101', now: instant });
-    assert.equal(florida.reason, REASONS.SUNDAY_BLACKOUT,
-      'it is Sunday in Miami even though it is Saturday on the west coast');
+    const rhodeIsland = quietHours.evaluate({ zipCode: '02903', now: instant });
+    assert.equal(rhodeIsland.reason, REASONS.SUNDAY_BLACKOUT,
+      'it is Sunday in Providence even though it is Saturday on the west coast');
   });
 });
 
@@ -569,6 +574,7 @@ describe('jurisdiction.getStateTimezone', () => {
   it('resolves every zone in the tables through Intl', () => {
     const zones = new Set(Object.values(jurisdiction.STATE_TIMEZONE));
     for (const [, , , zone] of jurisdiction.ZIP3_TIMEZONE_OVERRIDES) zones.add(zone);
+    for (const zone of Object.values(jurisdiction.AREA_CODE_TIMEZONE_OVERRIDES)) zones.add(zone);
     for (const zone of zones) {
       assert.doesNotThrow(() => new Intl.DateTimeFormat('en-US', { timeZone: zone }), `${zone} is not a valid IANA zone`);
     }
@@ -616,9 +622,12 @@ describe('rule tables are immutable', () => {
   it('cannot be mutated through a nested rule object', () => {
     // A shallow freeze leaves these writable, and a single stray assignment
     // would widen a compliance window process-wide with nothing in the diff.
-    assert.throws(() => { STATE_RULES.MD.endMinutes = 1; }, TypeError);
+    assert.throws(() => { STATE_RULES.MD[0].windows[3].end = 1; }, TypeError);
+    assert.throws(() => { STATE_RULES.MD[0].windows[3] = null; }, TypeError);
+    assert.throws(() => { STATE_RULES.MD.push({}); }, TypeError);
     assert.throws(() => { STATE_RULES.MD = null; }, TypeError);
-    assert.equal(STATE_RULES.MD.endMinutes, 20 * 60);
+    assert.throws(() => { quietHours.HOLIDAY_CALENDARS.AL.holidays.pop(); }, TypeError);
+    assert.equal(STATE_RULES.MD[0].windows[3].end, 20 * 60);
   });
 
   it('cannot be mutated through the jurisdiction range tables', () => {
@@ -627,10 +636,26 @@ describe('rule tables are immutable', () => {
   });
 
   it('carries a citation and an explicit lastVerified on every rule', () => {
-    for (const [code, rule] of Object.entries(STATE_RULES)) {
-      assert.equal(typeof rule.citation, 'string', `${code} needs a citation`);
-      assert.ok(rule.citation.length > 0, `${code} needs a citation`);
-      assert.ok('lastVerified' in rule, `${code} must state whether it has been verified`);
+    for (const [code, versions] of Object.entries(STATE_RULES)) {
+      for (const rule of versions) {
+        assert.equal(typeof rule.citation, 'string', `${code} needs a citation`);
+        assert.ok(rule.citation.length > 0, `${code} needs a citation`);
+        assert.ok('lastVerified' in rule, `${code} must state whether it has been verified`);
+        assert.ok(['yes', 'unclear', 'no'].includes(rule.coversText), `${code} must say whether it covers texts`);
+      }
+    }
+  });
+
+  it('only encodes rules stricter than federal somewhere', () => {
+    // A rule identical to federal is noise, and noise in a compliance table
+    // reads as coverage that is not there.
+    for (const [code, versions] of Object.entries(STATE_RULES)) {
+      for (const rule of versions) {
+        const stricter = rule.holidays || rule.fixedClock || rule.windows.some(
+          (w) => w === null || w.start > 8 * 60 || w.end < 21 * 60,
+        );
+        assert.ok(stricter, `${code} (${rule.effectiveFrom || 'original'}) is no stricter than federal`);
+      }
     }
   });
 });
@@ -641,31 +666,33 @@ describe('rule tables are immutable', () => {
 describe('QuietHoursEngine — custom rules', () => {
   it('accepts an added state override', () => {
     const engine = new QuietHoursEngine({
-      rules: { OK: { startMinutes: 8 * 60, endMinutes: 20 * 60 } },
+      rules: { NC: { windows: { default: ['08:00', '20:00'] } } },
     });
 
-    // Wed 20:30 CDT — inside the federal window, outside the injected one.
-    const now = utcDate(2026, 6, 25, 1, 30);
-    assert.equal(quietHours.evaluate({ zipCode: '73101', now }).eligible, true);
+    // Wed 20:30 EDT — inside the federal window, outside the injected one.
+    const now = utcDate(2026, 6, 25, 0, 30);
+    assert.equal(quietHours.evaluate({ zipCode: '27601', now }).eligible, true);
 
-    const out = engine.evaluate({ zipCode: '73101', now });
+    const out = engine.evaluate({ zipCode: '27601', now });
     assert.equal(out.eligible, false);
-    assert.equal(out.ruleApplied, 'OK');
+    assert.equal(out.ruleApplied, 'NC');
   });
 
   it('replaces a bundled rule', () => {
     const engine = new QuietHoursEngine({
-      rules: { FL: { startMinutes: 8 * 60, endMinutes: 21 * 60, excludesSundays: false } },
+      // The 1.x rule shape is still accepted.
+      rules: { UT: { startMinutes: 8 * 60, endMinutes: 21 * 60, excludesSundays: false } },
     });
-    assert.equal(engine.evaluate({ zipCode: '33101', now: SUN_10AM_ET }).eligible, true);
-    assert.equal(quietHours.evaluate({ zipCode: '33101', now: SUN_10AM_ET }).eligible, false,
+    const sundayNoonMountain = utcDate(2026, 6, 21, 18, 0);
+    assert.equal(engine.evaluate({ zipCode: '84101', now: sundayNoonMountain }).eligible, true);
+    assert.equal(quietHours.evaluate({ zipCode: '84101', now: sundayNoonMountain }).eligible, false,
       'the default engine must be unaffected');
   });
 
   it('leaves the bundled table untouched', () => {
     // eslint-disable-next-line no-new
     new QuietHoursEngine({ rules: { FL: { startMinutes: 0, endMinutes: 1 } } });
-    assert.equal(STATE_RULES.FL.startMinutes, 8 * 60);
+    assert.equal(STATE_RULES.FL[0].windows[1].start, 8 * 60);
   });
 
   it('rejects a malformed rule at construction, not at evaluation', () => {
@@ -684,11 +711,65 @@ describe('QuietHoursEngine — custom rules', () => {
   });
 });
 
+describe('jurisdiction.getAreaCodeTimezone', () => {
+  it('reads an area code in its state\'s minority zone on its own clock', () => {
+    assert.equal(jurisdiction.getAreaCodeTimezone(915), 'America/Denver');    // El Paso
+    assert.equal(jurisdiction.getAreaCodeTimezone(865), 'America/New_York');  // Knoxville
+    assert.equal(jurisdiction.getAreaCodeTimezone(423), 'America/New_York');  // Chattanooga
+    assert.equal(jurisdiction.getAreaCodeTimezone(270), 'America/Chicago');   // Bowling Green
+    assert.equal(jurisdiction.getAreaCodeTimezone(219), 'America/Chicago');   // Gary
+    assert.equal(jurisdiction.getAreaCodeTimezone(850), 'America/Chicago');   // Pensacola
+  });
+
+  it('keeps the state default everywhere else', () => {
+    assert.equal(jurisdiction.getAreaCodeTimezone(214), 'America/Chicago');   // Dallas
+    assert.equal(jurisdiction.getAreaCodeTimezone(615), 'America/Chicago');   // Nashville
+    assert.equal(jurisdiction.getAreaCodeTimezone(305), 'America/New_York');  // Miami
+    assert.equal(jurisdiction.getAreaCodeTimezone(800), null);                // toll-free
+  });
+
+  it('only overrides codes that belong to the state it names', () => {
+    for (const code of Object.keys(jurisdiction.AREA_CODE_TIMEZONE_OVERRIDES)) {
+      assert.ok(jurisdiction.getAreaCodeState(Number(code)), `${code} has an override but no state`);
+    }
+  });
+});
+
+describe('area-code resolution in a multi-timezone state', () => {
+  it('blocks a 7:30 AM Mountain send to an El Paso number', () => {
+    // 13:30Z is 7:30 AM MDT. Read on Texas's default Central clock it is
+    // 8:30 AM, and the send would pass.
+    const out = quietHours.evaluate({ phone: '+19155551234', now: utcDate(2026, 7, 15, 13, 30) });
+    assert.equal(out.timezone, 'America/Denver');
+    assert.equal(out.eligible, false);
+    assert.equal(out.reason, REASONS.OUTSIDE_WINDOW);
+  });
+
+  it('blocks a 9:30 PM Eastern send to a Knoxville number', () => {
+    // 01:30Z is 9:30 PM EDT, 8:30 PM on Tennessee's default Central clock.
+    const out = quietHours.evaluate({ phone: '+18655551234', now: utcDate(2026, 7, 16, 1, 30) });
+    assert.equal(out.timezone, 'America/New_York');
+    assert.equal(out.eligible, false);
+  });
+});
+
 describe('QuietHoursEngine — custom resolver', () => {
+  it('matches a lower-case state from a resolver to its rule', () => {
+    // 'md' must still close at 8 PM. Unnormalised it misses the 'MD' key and
+    // falls through to the federal 9 PM, widening the window silently.
+    const engine = new QuietHoursEngine({
+      resolver: () => ({ state: 'md', timezone: 'America/New_York', source: 'billing_address' }),
+    });
+    const out = engine.evaluate({ now: utcDate(2026, 6, 25, 0, 30) }); // 8:30 PM EDT
+    assert.equal(out.state, 'MD');
+    assert.equal(out.ruleApplied, 'MD');
+    assert.equal(out.eligible, false);
+  });
+
   it('replaces ZIP and area-code guessing wholesale', () => {
     // What a caller with a verified billing address on file should be doing.
     const engine = new QuietHoursEngine({
-      resolver: () => ({ state: 'FL', timezone: 'America/New_York', source: 'billing_address' }),
+      resolver: () => ({ state: 'UT', timezone: 'America/Denver', source: 'billing_address' }),
     });
     const out = engine.evaluate({ phone: '+12125551234', now: SUN_10AM_ET });
     assert.equal(out.source, 'billing_address');
@@ -700,5 +781,281 @@ describe('QuietHoursEngine — custom resolver', () => {
     // should name it, not surface as a destructuring TypeError frames away.
     const engine = new QuietHoursEngine({ resolver: () => undefined });
     assert.throws(() => engine.evaluate({ now: NOON_ET }), /resolver must return/);
+  });
+});
+
+
+// ── 2.0: per-day windows, holidays, effective dates, presumptions ─
+
+const holidays = require('../holidays');
+
+describe('per-weekday windows', () => {
+  it('TX: opens at noon on Sundays, 9 AM otherwise', () => {
+    const sunday10 = quietHours.evaluate({ zipCode: '75201', now: utcDate(2026, 6, 21, 15, 0) }); // 10:00 CDT
+    assert.equal(sunday10.eligible, false);
+    assert.equal(sunday10.reason, REASONS.OUTSIDE_WINDOW);
+    assert.equal(quietHours.evaluate({ zipCode: '75201', now: utcDate(2026, 6, 21, 17, 0) }).eligible, true); // noon
+    assert.equal(quietHours.evaluate({ zipCode: '75201', now: WED(14, 0) }).eligible, true); // Wed 09:00 CDT
+    assert.equal(quietHours.evaluate({ zipCode: '75201', now: WED(13, 59) }).eligible, false); // 08:59
+  });
+
+  it('RI: 9–6 on weekdays, 10–5 on Saturdays, never on Sundays', () => {
+    assert.equal(quietHours.evaluate({ zipCode: '02903', now: WED(21, 59) }).eligible, true);  // 17:59 EDT
+    assert.equal(quietHours.evaluate({ zipCode: '02903', now: WED(22, 0) }).eligible, false);  // 18:00
+    const saturday = (h, m) => utcDate(2026, 6, 27, h, m);
+    assert.equal(quietHours.evaluate({ zipCode: '02903', now: saturday(13, 59) }).eligible, false); // 09:59
+    assert.equal(quietHours.evaluate({ zipCode: '02903', now: saturday(14, 0) }).eligible, true);   // 10:00
+    assert.equal(quietHours.evaluate({ zipCode: '02903', now: saturday(21, 0) }).eligible, false);  // 17:00
+  });
+
+  it('reports a closed weekday other than Sunday as a day blackout', () => {
+    const engine = new QuietHoursEngine({ rules: { NC: { windows: { default: ['08:00', '21:00'], wed: null } } } });
+    assert.equal(engine.evaluate({ zipCode: '27601', now: NOON_ET }).reason, REASONS.DAY_BLACKOUT);
+  });
+});
+
+describe('rules that take effect on a date', () => {
+  // Pennsylvania's Act 47 of 2026: from 2026-10-18, 9 AM – 7 PM, no Sundays.
+  it('applies the old PA window before the effective date and the new one from it', () => {
+    const satEvening = quietHours.evaluate({ zipCode: '19103', now: utcDate(2026, 10, 17, 23, 30) }); // Sat 19:30 EDT
+    assert.equal(satEvening.eligible, true, 'the 9 PM close still applies on 10-17');
+
+    const sunNoon = quietHours.evaluate({ zipCode: '19103', now: utcDate(2026, 10, 18, 16, 0) });
+    assert.equal(sunNoon.reason, REASONS.SUNDAY_BLACKOUT, '10-18 is a Sunday, and the new rule bars it');
+
+    const monEvening = quietHours.evaluate({ zipCode: '19103', now: utcDate(2026, 10, 19, 23, 30) }); // Mon 19:30
+    assert.equal(monEvening.eligible, false);
+    assert.equal(monEvening.reason, REASONS.OUTSIDE_WINDOW);
+  });
+
+  it('switches on the RECIPIENT\'s local date', () => {
+    // 03:30Z on 10-18 is still 23:30 on 10-17 in Philadelphia: the old rule.
+    const engine = new QuietHoursEngine({
+      rules: {
+        NC: [
+          { windows: { default: ['00:00', '24:00'] } },
+          { effectiveFrom: '2026-10-18', windows: { default: ['09:00', '10:00'] } },
+        ],
+      },
+    });
+    assert.equal(engine.evaluate({ zipCode: '27601', now: utcDate(2026, 10, 18, 3, 30) }).eligible, true);
+    assert.equal(engine.evaluate({ zipCode: '27601', now: utcDate(2026, 10, 18, 4, 30) }).eligible, false);
+  });
+
+  it('defers across the change to the new rule\'s window', () => {
+    // Sat 10-17 21:30 EDT: closed under the old rule; Sunday is closed under
+    // the new one; Monday 10-19 opens at 9 AM.
+    const next = quietHours.nextEligibleAt({ zipCode: '19103', now: utcDate(2026, 10, 18, 1, 30) });
+    assert.equal(next.toISOString(), '2026-10-19T13:00:00.000Z');
+  });
+});
+
+describe('holidays', () => {
+  it('computes Western Easter', () => {
+    const iso = (y) => new Date(holidays.easterSunday(y)).toISOString().slice(0, 10);
+    assert.equal(iso(2024), '2024-03-31');
+    assert.equal(iso(2025), '2025-04-20');
+    assert.equal(iso(2026), '2026-04-05');
+    assert.equal(iso(2027), '2027-03-28');
+    assert.equal(iso(2038), '2038-04-25');
+  });
+
+  it('resolves nth and last weekdays', () => {
+    const cal = holidays.normalizeCalendar('t', {
+      holidays: [
+        { name: 'last Mon May', month: 5, weekday: 1, nth: -1 },
+        { name: '4th Thu Nov', month: 11, weekday: 4, nth: 4 },
+        { name: 'Tue after 1st Mon Nov', month: 11, weekday: 1, nth: 1, offset: 1 },
+      ],
+    });
+    const dates = holidays.datesIn(cal, 2026);
+    assert.equal(dates.get('2026-05-25'), 'last Mon May');
+    assert.equal(dates.get('2026-11-26'), '4th Thu Nov');
+    assert.equal(dates.get('2026-11-03'), 'Tue after 1st Mon Nov');
+  });
+
+  it('blocks a weekend holiday AND its observed weekday', () => {
+    const cal = holidays.normalizeCalendar('t', { observe: 'weekend', holidays: [{ name: 'NY', month: 1, day: 1 }] });
+    // 2028-01-01 is a Saturday: observed Friday 2027-12-31.
+    assert.equal(holidays.holidayOn(cal, 2027, '2027-12-31'), 'NY');
+    assert.equal(holidays.holidayOn(cal, 2028, '2028-01-01'), 'NY');
+    const sundayOnly = holidays.normalizeCalendar('t', { observe: 'sunday', holidays: [{ name: 'NY', month: 1, day: 1 }] });
+    assert.equal(holidays.holidayOn(sundayOnly, 2027, '2027-12-31'), null);
+  });
+
+  it('AL: no contact on Christmas Day', () => {
+    // 2026-12-25 is a Friday.
+    const out = quietHours.evaluate({ zipCode: '35203', now: utcDate(2026, 12, 25, 17, 0) });
+    assert.equal(out.eligible, false);
+    assert.equal(out.reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(quietHours.evaluate({ zipCode: '35203', now: utcDate(2026, 12, 24, 17, 0) }).eligible, true);
+  });
+
+  it('defers past a holiday that follows a Sunday-banned day', () => {
+    // AL, Sat 2026-12-26 21:00 CST → Sunday banned → Mon 12-28 08:00.
+    const engine = new QuietHoursEngine({
+      rules: { AL: { windows: { default: ['08:00', '20:00'], sun: null },
+        holidays: { holidays: [{ name: 'Test Monday', month: 12, day: 28 }] } } },
+    });
+    const next = engine.nextEligibleAt({ zipCode: '35203', now: utcDate(2026, 12, 27, 3, 0) });
+    assert.equal(next.toISOString(), '2026-12-29T14:00:00.000Z', 'Tue 08:00 CST');
+  });
+
+  it('rejects a malformed calendar at construction', () => {
+    const rule = (h) => ({ NC: { windows: { default: ['08:00', '21:00'] }, holidays: h } });
+    assert.throws(() => new QuietHoursEngine({ rules: rule('Nowhere') }), /no holiday calendar named/);
+    assert.throws(() => new QuietHoursEngine({ rules: rule({ holidays: [{ name: 'x', month: 13, day: 1 }] }) }), /month 1-12/);
+    assert.throws(() => new QuietHoursEngine({ rules: rule({ holidays: [{ name: 'x', month: 1, weekday: 1, nth: 5 }] }) }), /nth/);
+    assert.throws(() => new QuietHoursEngine({ rules: rule({ observe: 'monday', holidays: [] }) }), /observe/);
+  });
+});
+
+describe('a statute that names a fixed clock (MS: "Central Standard Time")', () => {
+  it('checks the window on standard time as well as the recipient\'s daylight time', () => {
+    // 8:30 AM CDT is 7:30 AM CST — before the open on the statute's clock.
+    const morning = quietHours.evaluate({ zipCode: '39201', now: utcDate(2026, 6, 24, 13, 30) });
+    assert.equal(morning.eligible, false);
+    // 9:00 AM CDT is 8:00 AM CST.
+    assert.equal(quietHours.evaluate({ zipCode: '39201', now: utcDate(2026, 6, 24, 14, 0) }).eligible, true);
+    // In winter the clocks agree: 8:00 AM CST.
+    assert.equal(quietHours.evaluate({ zipCode: '39201', now: utcDate(2026, 1, 7, 14, 0) }).eligible, true);
+  });
+
+  it('defers to the later of the two openings', () => {
+    const next = quietHours.nextEligibleAt({ zipCode: '39201', now: utcDate(2026, 6, 24, 11, 0) }); // 6 AM CDT
+    assert.equal(next.toISOString(), '2026-06-24T14:00:00.000Z', '9 AM CDT = 8 AM CST');
+  });
+});
+
+describe('area-code presumption (FL, OK, MD, CT)', () => {
+  const EVENING_ET = utcDate(2026, 6, 25, 0, 30); // Wed 20:30 EDT
+
+  it('holds a Georgia ZIP with a Florida number to Florida\'s 8 PM close too', () => {
+    const out = quietHours.evaluate({ zipCode: '30305', phone: '+13055551234', now: EVENING_ET });
+    assert.equal(out.eligible, false);
+    assert.equal(out.state, 'GA', 'the primary jurisdiction is still the ZIP');
+    assert.equal(out.ruleApplied, 'FL', 'the deciding rule is the presumed one');
+    assert.deepEqual(out.jurisdictions.map((j) => [j.state, j.source, j.eligible]), [
+      ['GA', SOURCES.ZIP, true],
+      ['FL', SOURCES.AREA_CODE_PRESUMPTION, false],
+    ]);
+  });
+
+  it('adds nothing for a state without a presumption', () => {
+    // 512 is Austin; Texas has no area-code presumption.
+    const out = quietHours.evaluate({ zipCode: '30305', phone: '+15125551234', now: EVENING_ET });
+    assert.equal(out.eligible, true);
+    assert.equal(out.jurisdictions.length, 1);
+  });
+
+  it('adds nothing when the ZIP and the number agree', () => {
+    assert.equal(quietHours.resolveJurisdictions({ zipCode: '33101', phone: '+13055551234' }).length, 1);
+  });
+
+  it('is not applied over a custom resolver', () => {
+    const engine = new QuietHoursEngine({
+      resolver: () => ({ state: 'GA', timezone: 'America/New_York', source: 'billing_address' }),
+    });
+    assert.equal(engine.evaluate({ phone: '+13055551234', now: EVENING_ET }).eligible, true);
+  });
+
+  it('defers until both jurisdictions are open', () => {
+    // Connecticut opens at 9; a Georgia ZIP alone would open at 8.
+    const next = quietHours.nextEligibleAt({ zipCode: '30305', phone: '+12035551234', now: utcDate(2026, 6, 24, 11, 0) });
+    assert.equal(next.toISOString(), '2026-06-24T13:00:00.000Z', '9 AM EDT');
+  });
+});
+
+describe('onlyRulesCoveringText', () => {
+  it('falls back to federal for rules not clearly covering texts, and keeps the rest', () => {
+    const engine = new QuietHoursEngine({ onlyRulesCoveringText: true });
+    const evening = utcDate(2026, 6, 25, 1, 30); // Wed 20:30 CDT
+    assert.equal(engine.evaluate({ zipCode: '75201', now: WED(13, 30) }).ruleApplied, 'federal', 'TX is unclear');
+    assert.equal(engine.evaluate({ zipCode: '57104', now: WED(13, 30) }).ruleApplied, 'SD', 'SD names texts');
+    assert.equal(quietHours.evaluate({ zipCode: '35203', now: evening }).eligible, false, 'default engine applies AL');
+  });
+
+  it('must be a boolean', () => {
+    assert.throws(() => new QuietHoursEngine({ onlyRulesCoveringText: 'yes' }), /boolean/);
+  });
+});
+
+describe('rule validation (2.0 shape)', () => {
+  const bad = [
+    [{ NC: { windows: { default: ['8:00', '20:00'] } } }, /HH:MM/],
+    [{ NC: { windows: { default: ['08:00', '25:00'] } } }, /HH:MM/],
+    [{ NC: { windows: { weekday: ['08:00', '20:00'] } } }, /unknown windows key 'weekday'/],
+    [{ NC: { windows: { mon: ['08:00', '20:00'] } } }, /no default/],
+    [{ NC: { windows: { default: ['08:00', '20:00'] }, startMinutes: 480 } }, /not both/],
+    [{ NC: { windows: { default: ['08:00', '20:00'] }, excludeSundays: true } }, /unknown field 'excludeSundays'/],
+    [{ NC: { windows: { default: ['08:00', '20:00'] }, effectiveFrom: '10/18/2026' } }, /YYYY-MM-DD/],
+    [{ NC: { windows: { default: ['08:00', '20:00'] }, fixedClock: 'Central Standard Time' } }, /fixedClock/],
+    [{ NC: { windows: { default: ['08:00', '20:00'] }, coversText: true } }, /coversText/],
+    [{ NC: [{ windows: { default: ['08:00', '20:00'] } }, { windows: { default: ['09:00', '20:00'] } }] }, /same effectiveFrom/],
+    [{ NC: [] }, /no versions/],
+  ];
+  for (const [rules, message] of bad) {
+    it(`rejects ${JSON.stringify(rules).slice(0, 70)}`, () => {
+      assert.throws(() => new QuietHoursEngine({ rules }), message);
+    });
+  }
+
+  it('rejects an unknown constructor option', () => {
+    assert.throws(() => new QuietHoursEngine({ rule: {} }), /unknown option 'rule'/);
+  });
+});
+
+describe('deferral lands on whole minutes', () => {
+  it('returns 8:00:00, not 8:00 plus the seconds of now', () => {
+    const next = quietHours.nextEligibleAt({ zipCode: '30305', now: new Date(Date.UTC(2026, 5, 24, 10, 15, 37, 250)) });
+    assert.equal(next.toISOString(), '2026-06-24T12:00:00.000Z');
+  });
+});
+
+describe('the bundled holiday calendars', () => {
+  const at = (zipCode, y, m, d, utcHour) => quietHours.evaluate({ zipCode, now: utcDate(y, m, d, utcHour, 0) });
+
+  it('LA: Mardi Gras and Good Friday, by Easter', () => {
+    // Easter 2027 is March 28: Mardi Gras Feb 9, Good Friday Mar 26.
+    assert.equal(at('70112', 2027, 2, 9, 18).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('70112', 2027, 3, 26, 18).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('70112', 2027, 2, 10, 18).eligible, true);
+  });
+
+  it('LA: the election-day holiday falls in even years only', () => {
+    assert.equal(at('70112', 2026, 11, 3, 18).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('70112', 2027, 11, 2, 18).eligible, true);
+  });
+
+  it('UT: Pioneer Day on a Saturday blocks the Saturday and the Friday before', () => {
+    // 2027-07-24 is a Saturday.
+    assert.equal(at('84101', 2027, 7, 24, 18).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('84101', 2027, 7, 23, 18).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('84101', 2027, 7, 22, 18).eligible, true);
+  });
+
+  it('PA: Flag Day and Election Day are legal holidays; Juneteenth is not', () => {
+    assert.equal(at('19103', 2027, 6, 14, 17).reason, REASONS.HOLIDAY_BLACKOUT); // Mon
+    assert.equal(at('19103', 2026, 11, 3, 17).reason, REASONS.HOLIDAY_BLACKOUT); // Tue
+    assert.equal(at('19103', 2026, 11, 4, 17).eligible, true);
+    assert.equal(at('19103', 2028, 6, 19, 17).eligible, true); // Mon, Juneteenth
+  });
+
+  it('RI: a Saturday Christmas blocks the Friday before and the Monday after', () => {
+    // 2027-12-25 is a Saturday.
+    assert.equal(at('02903', 2027, 12, 24, 17).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('02903', 2027, 12, 27, 17).reason, REASONS.HOLIDAY_BLACKOUT);
+    assert.equal(at('02903', 2027, 12, 28, 17).eligible, true);
+  });
+
+  it('RI: Victory Day, the second Monday of August', () => {
+    assert.equal(at('02903', 2027, 8, 9, 17).reason, REASONS.HOLIDAY_BLACKOUT);
+  });
+
+  it('every calendar names its source', () => {
+    for (const [name, calendar] of Object.entries(quietHours.HOLIDAY_CALENDARS)) {
+      assert.ok(calendar.citation, `${name} needs a citation`);
+      assert.ok(calendar.holidays.length > 0, `${name} is empty`);
+    }
   });
 });
