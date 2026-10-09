@@ -1059,3 +1059,16 @@ describe('the bundled holiday calendars', () => {
     }
   });
 });
+
+describe('ESM consumers', () => {
+  it('can import every documented name', async () => {
+    // cjs-module-lexer detects only plain-identifier exports; anything else
+    // compiles against index.d.ts and then fails at runtime.
+    const mod = await import('../index.js');
+    for (const name of ['evaluate', 'nextEligibleAt', 'resolveJurisdiction', 'resolveJurisdictions',
+      'defaultEngine', 'QuietHoursEngine', 'FEDERAL_RULE', 'STATE_RULES', 'HOLIDAY_CALENDARS',
+      'SOURCES', 'REASONS', 'extractAreaCode', 'parseZip3']) {
+      assert.ok(name in mod, `${name} is not a named ESM export`);
+    }
+  });
+});

@@ -828,18 +828,35 @@ const defaultEngine = new QuietHoursEngine();
 // class onto it as a property reads as a singleton by accident; this says
 // plainly that the module offers a default engine AND the class to build your
 // own, and it leaves the instance free to be frozen.
+//
+// Each export is a plain identifier: Node's cjs-module-lexer only detects named
+// exports written that way, and an arrow-function value would leave ESM
+// consumers with `import { evaluate }` failing at runtime while the types
+// promise it works.
+
+/** {@link QuietHoursEngine#evaluate} on the default engine. */
+function evaluate(args) { return defaultEngine.evaluate(args); }
+/** {@link QuietHoursEngine#nextEligibleAt} on the default engine. */
+function nextEligibleAt(args) { return defaultEngine.nextEligibleAt(args); }
+/** {@link QuietHoursEngine#resolveJurisdiction} on the default engine. */
+function resolveJurisdiction(args) { return defaultEngine.resolveJurisdiction(args); }
+/** {@link QuietHoursEngine#resolveJurisdictions} on the default engine. */
+function resolveJurisdictions(args) { return defaultEngine.resolveJurisdictions(args); }
+
+const HOLIDAY_CALENDARS = CALENDARS;
+
 module.exports = {
-  evaluate: (args) => defaultEngine.evaluate(args),
-  nextEligibleAt: (args) => defaultEngine.nextEligibleAt(args),
-  resolveJurisdiction: (args) => defaultEngine.resolveJurisdiction(args),
-  resolveJurisdictions: (args) => defaultEngine.resolveJurisdictions(args),
+  evaluate,
+  nextEligibleAt,
+  resolveJurisdiction,
+  resolveJurisdictions,
 
   defaultEngine,
   QuietHoursEngine,
 
   FEDERAL_RULE,
   STATE_RULES,
-  HOLIDAY_CALENDARS: CALENDARS,
+  HOLIDAY_CALENDARS,
   SOURCES,
   REASONS,
 
